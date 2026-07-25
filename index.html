@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
-<title>Chord & Melody Composer v1.3</title>
+<title>Chord & Melody Composer v1.3.1</title>
 <style>
 :root{
   --bg:#0d1117;--panel:#161b22;--panel2:#1f2630;--line:#30363d;
@@ -187,7 +187,7 @@ footer{margin:18px 0 5px;text-align:center;color:#697482;font-size:.74rem}
   </div>
 </section>
 </div>
-<footer>Chord & Melody Composer v1.3 — browser-based theory and audio-analysis engine</footer>
+<footer>Chord & Melody Composer v1.3.1 — browser-based theory and audio-analysis engine</footer>
 </div>
 
 <script>
@@ -393,8 +393,8 @@ function generate(){
     comp={events,bars:barsOut,root:manualRoot,scale,tempo,targetBars,beatsPerBar:beats,meterValue:el("meter").value};
   }
   if(trans)transposeComposition(comp,trans);
-  composition=comp;render(comp);
-  setStatus(`Generated ${targetBars} bars in ${NAMES_SHARP[comp.root]} ${scale}${trans?` (transposed ${trans>0?"+":""}${trans} semitones)`:''}.`,"ok");
+  composition=comp;const corrected=validateCompositionPitch(comp,true);render(comp);
+  setStatus(`Generated ${targetBars} bars in ${NAMES_SHARP[comp.root]} ${scale}${trans?` (transposed ${trans>0?"+":""}${trans} semitones)`:''}${corrected?`; corrected ${corrected} out-of-key melody note${corrected===1?"":"s"}`:""}.`,"ok");
  }catch(e){setStatus(e.message,"error")}
 }
 el("generateBtn").onclick=generate;
@@ -436,6 +436,15 @@ el("applyEventBtn").onclick=applySelectedEvent;el("deleteEventBtn").onclick=dele
 function escapeHtml(s){return s.replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]))}
 function setStatus(msg,type=""){el("status").textContent=msg;el("status").className="status "+type}
 
+function nearestAllowedMidi(midi,allowedPcs,chordPcs=[]){
+ let best=midi,bestScore=1e9;for(let d=-12;d<=12;d++){const cand=midi+d,pc=(cand%12+12)%12;if(!allowedPcs.includes(pc))continue;const score=Math.abs(d)-(chordPcs.includes(pc)?.2:0);if(score<bestScore){bestScore=score;best=cand}}
+ return Math.max(24,Math.min(108,best));
+}
+function validateCompositionPitch(comp,repair=true){
+ const allowed=scalePCs(comp.root,comp.scale),issues=[];
+ comp.events.forEach((n,i)=>{const pc=(n.midi%12+12)%12;if(!allowed.includes(pc)){const bar=Math.min(comp.targetBars-1,Math.max(0,Math.floor(n.start/comp.beatsPerBar))),beat=n.start-bar*comp.beatsPerBar,ch=chordAt(comp.bars[bar]||[],beat),chordPcs=ch?ch.intervals.map(iv=>(ch.root+iv)%12):[];issues.push(i);if(repair)n.midi=nearestAllowedMidi(n.midi,allowed,chordPcs)}});
+ return issues.length;
+}
 function chordPerformance(comp){
  const style=el("chordStyle").value,out=[];
  comp.bars.forEach((bar,b)=>bar.forEach(c=>{
@@ -479,7 +488,7 @@ function trackChunk(events){
  data.push(0,0xff,0x2f,0);const len=data.length;return [...strBytes("MTrk"),(len>>>24)&255,(len>>>16)&255,(len>>>8)&255,len&255,...data];
 }
 function exportMidi(){
- if(!composition){generate();if(!composition)return}normalizeComposition(composition);
+ if(!composition){generate();if(!composition)return}const repaired=validateCompositionPitch(composition,true);normalizeComposition(composition);
  const ppq=480,bpb=composition.beatsPerBar,tempo=Math.round(60000000/composition.tempo),endTick=Math.round(compositionLength()*ppq);
  const meta=[{tick:0,order:0,data:[0xff,0x51,3,(tempo>>16)&255,(tempo>>8)&255,tempo&255]},{tick:0,order:1,data:[0xff,0x58,4,composition.meterValue==="6"?6:(bpb===3?3:4),composition.meterValue==="6"?3:2,24,8]},{tick:endTick,order:99,data:[0xff,0x01,0]}];
  const mel=[{tick:0,order:0,data:[0xc0,0]}],ch=[{tick:0,order:0,data:[0xc1,0]}];
@@ -487,8 +496,8 @@ function exportMidi(){
  chordPerformance(composition).forEach(n=>{const t=Math.max(0,Math.round(n.start*ppq)),end=Math.min(endTick,Math.max(t+1,Math.round((n.start+n.duration)*ppq)));ch.push({tick:t,order:1,data:[0x91,n.midi,Math.min(127,n.velocity||62)]},{tick:end,order:0,data:[0x81,n.midi,0]})});
  mel.push({tick:endTick,order:99,data:[0xff,0x01,0]});ch.push({tick:endTick,order:99,data:[0xff,0x01,0]});
  const header=[...strBytes("MThd"),0,0,0,6,0,1,0,3,(ppq>>8)&255,ppq&255],bytes=new Uint8Array([...header,...trackChunk(meta),...trackChunk(ch),...trackChunk(mel)]);
- const blob=new Blob([bytes],{type:"audio/midi"}),a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="chord_melody_composition_v1.3.mid";a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);
- setStatus(`MIDI exported. Chord and melody tracks both end at ${compositionLength()} beats.`,"ok");
+ const blob=new Blob([bytes],{type:"audio/midi"}),a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="chord_melody_composition_v1.3.1.mid";a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);
+ setStatus(`MIDI exported. Chord and melody tracks both end at ${compositionLength()} beats${repaired?`; ${repaired} out-of-key melody note${repaired===1?" was":"s were"} corrected`:""}.`,"ok");
 }
 el("midiBtn").onclick=exportMidi;
 
@@ -539,7 +548,20 @@ async function searchSong(){
 el("searchSongBtn").onclick=searchSong;
 el("songResults").onclick=async e=>{const b=e.target.closest(".choose-song");if(!b)return;const rows=el("songResults")._rows||[],r=rows[+b.dataset.songIndex];if(!r)return;selectedSong=r;document.querySelectorAll(".song-result").forEach(x=>x.classList.toggle("selected",+x.dataset.songIndex===+b.dataset.songIndex));const artist=(r["artist-credit"]||[]).map(x=>x.name).join(", ");el("styleArtist").value=artist;try{const aid=r["artist-credit"]?.[0]?.artist?.id;if(aid){const d=await mbFetch(`https://musicbrainz.org/ws/2/artist/${aid}?inc=tags&fmt=json`);showTraits((d.tags||[]).sort((a,b)=>(b.count||0)-(a.count||0)).map(x=>x.name))}else showTraits([])}catch{showTraits([])}setStatus(`Selected “${r.title}” by ${artist||"unknown artist"}.`,"ok")};
 function applyPresetObject(name){const p=PRESETS[name]||PRESETS.pop;el("genrePreset").value=name;el("tempo").value=p.tempo;el("meter").value=p.meter;el("scaleSelect").value=p.scale;el("density").value=p.density;el("chordStyle").value=p.chordStyle;el("noteStyle").value=p.noteStyle;el("chordInput").value=p.chords}
-function varyReference(seed,strength){const roots=["C","D","E","F","G","A","B","C#","F#","Bb","Eb"],root=roots[seed%roots.length];el("keySelect").value=FLAT_TO_SHARP[root.toUpperCase()]||root;const shift=strength==="strong"?2:strength==="medium"?1:0;el("tempo").value=Math.max(55,Math.min(180,(+el("tempo").value||110)+(((seed>>4)%9)-4)*(shift+1)));if(selectedSong?.length)el("bars").value=Math.max(4,Math.min(64,Math.round(selectedSong.length/1000/(60/(+el("tempo").value)*4))));}
+function transposeChordSymbol(symbol,semitones){
+ const m=String(symbol||"").trim().match(/^([A-Ga-g](?:#|b)?)(.*)$/);if(!m)return symbol;
+ const root=PC[normRoot(m[1])];if(root===undefined)return symbol;
+ let suffix=m[2]||"";suffix=suffix.replace(/\/([A-Ga-g](?:#|b)?)/g,(all,bass)=>{const pc=PC[normRoot(bass)];return pc===undefined?all:`/${NAMES_SHARP[(pc+semitones+120)%12]}`});
+ return NAMES_SHARP[(root+semitones+120)%12]+suffix;
+}
+function transposeChordText(text,semitones){return String(text||"").split(/(\s+|,|\|)/).map(token=>/^[A-Ga-g](?:#|b)?/.test(token.trim())?transposeChordSymbol(token,semitones):token).join("")}
+function varyReference(seed,strength){
+ const roots=["C","D","E","F","G","A","B","C#","F#","Bb","Eb"],targetName=roots[seed%roots.length],targetRoot=PC[normRoot(targetName)];
+ const sourceRoot=PC[el("keySelect").value]??0,delta=(targetRoot-sourceRoot+12)%12;
+ el("chordInput").value=transposeChordText(el("chordInput").value,delta);
+ el("keySelect").value=NAMES_SHARP[targetRoot];
+ const shift=strength==="strong"?2:strength==="medium"?1:0;el("tempo").value=Math.max(55,Math.min(180,(+el("tempo").value||110)+(((seed>>4)%9)-4)*(shift+1)));if(selectedSong?.length)el("bars").value=Math.max(4,Math.min(64,Math.round(selectedSong.length/1000/(60/(+el("tempo").value)*4))));
+}
 function createFromReference(){const artist=el("styleArtist").value.trim(),seed=hashText(`${selectedSong?.title||el("songName").value}|${artist}`),tags=[...artistTraits,artist],preset=presetFromTags(tags);applyPresetObject(preset);varyReference(seed,el("styleStrength").value);setMode("chords");generate();const target=el("referenceTarget").value;if(composition){if(target==="chords")composition.events=[];if(target==="melody")composition.bars=composition.bars.map(()=>[]);composition.reference={title:selectedSong?.title||el("songName").value.trim(),artist,preset,traits:artistTraits};render(composition);setStatus(`Created an original ${target==="both"?"chord and melody arrangement":target+" track"} using broad ${preset} traits${artist?` associated with ${artist}`:""}.`,"ok")}}
 el("applyReferenceBtn").onclick=createFromReference;
 el("licensedJson").onchange=async e=>{const f=e.target.files?.[0];if(!f)return;try{const d=JSON.parse(await f.text()),beats=Math.max(1,+d.beatsPerBar||4),bars=Math.max(1,+d.targetBars||Math.ceil(+d.lengthBeats/beats)||8),root=PC[normRoot(d.key||"C")]??0,scale=d.scale==="minor"?"minor":"major";const chordBars=Array.from({length:bars},()=>[]);(d.chords||[]).forEach(c=>{const p=parseChord(c.symbol);if(!p)return;const start=Math.max(0,+c.start||0),bar=Math.min(bars-1,Math.floor(start/beats));chordBars[bar].push({...p,start:start-bar*beats,duration:Math.max(.125,+c.duration||beats)} )});const events=(d.melody||[]).map(n=>({midi:Number.isFinite(+n.midi)?+n.midi:noteToMidi(n.note),start:+n.start||0,duration:Math.max(.125,+n.duration||1),velocity:Math.max(1,Math.min(127,+n.velocity||90))})).filter(n=>n.midi!==null&&Number.isFinite(n.midi));composition={bars:chordBars,events,root,scale,tempo:Math.max(40,Math.min(240,+d.tempo||110)),targetBars:bars,beatsPerBar:beats,meterValue:beats===3?"3":"4"};normalizeComposition(composition);render(composition);setStatus("Licensed provider chord/melody JSON imported.","ok")}catch(err){setStatus(`Could not import provider JSON: ${err.message}`,"error")}};
