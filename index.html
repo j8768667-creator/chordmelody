@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
-<title>Chord & Melody Composer v1.2</title>
+<title>Chord & Melody Composer v1.3</title>
 <style>
 :root{
   --bg:#0d1117;--panel:#161b22;--panel2:#1f2630;--line:#30363d;
@@ -64,6 +64,8 @@ footer{margin:18px 0 5px;text-align:center;color:#697482;font-size:.74rem}
 @media(max-width:820px){.audio-grid{grid-template-columns:1fr 1fr}.editor-grid{grid-template-columns:1fr 1fr}}
 @media(max-width:820px){.grid{grid-template-columns:1fr}.form-row,.form-row.three{grid-template-columns:1fr 1fr}.badge{display:none}}
 @media(max-width:480px){.app{padding:11px}.panel{padding:13px}.form-row,.form-row.three,.summary{grid-template-columns:1fr 1fr}.actions button{flex:1 1 44%}}
+
+.song-search{margin:14px 0;padding:14px;border:1px solid #d8dee9;border-radius:12px;background:#f8fafc}.song-grid{display:grid;grid-template-columns:2fr 1.5fr 1fr auto;gap:10px;align-items:end}.song-results{display:grid;gap:8px;margin-top:10px}.song-result{display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center;padding:9px 10px;border:1px solid #d8dee9;border-radius:9px;background:white}.song-result small{display:block;color:#64748b;margin-top:2px}.song-result.selected{outline:2px solid #2563eb}.trait-row{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}.trait{font-size:.78rem;background:#e2e8f0;border-radius:999px;padding:3px 8px}.song-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}@media(max-width:800px){.song-grid{grid-template-columns:1fr 1fr}.song-grid button{grid-column:span 2}}
 </style>
 </head>
 <body>
@@ -86,6 +88,24 @@ footer{margin:18px 0 5px;text-align:center;color:#697482;font-size:.74rem}
     <button id="clearMidiBtn" class="secondary" type="button">Clear file</button>
   </div>
   <div class="mini-note">MIDI is analysed locally. In Chords mode, simultaneous notes are converted into chord symbols; in Melody mode, the clearest melodic track is imported.</div>
+  <div class="song-search">
+    <h3 style="margin:0 0 10px">Song reference and artist influence</h3>
+    <div class="song-grid">
+      <div class="control"><label for="songName">Song name</label><input id="songName" placeholder="e.g. Dreams"></div>
+      <div class="control"><label for="songArtist">Artist (optional)</label><input id="songArtist" placeholder="e.g. Fleetwood Mac"></div>
+      <div class="control"><label for="referenceTarget">Create</label><select id="referenceTarget"><option value="both">Chords + melody</option><option value="chords">Chords only</option><option value="melody">Melody only</option></select></div>
+      <button id="searchSongBtn" class="secondary" type="button">Search song</button>
+    </div>
+    <div id="songResults" class="song-results"></div>
+    <div class="song-grid" style="margin-top:12px">
+      <div class="control"><label for="styleArtist">Inspired by artist</label><input id="styleArtist" placeholder="Enter an artist"></div>
+      <div class="control"><label for="styleStrength">Influence strength</label><select id="styleStrength"><option value="light">Light</option><option value="medium" selected>Medium</option><option value="strong">Strong</option></select></div>
+      <div class="control"><label for="licensedJson">Licensed provider JSON</label><input id="licensedJson" type="file" accept=".json,application/json"></div>
+      <button id="applyReferenceBtn" type="button">Create from reference</button>
+    </div>
+    <div id="styleTraits" class="trait-row"></div>
+    <div class="mini-note">Song search uses MusicBrainz metadata. It creates a new composition from broad genre, tempo and arranging traits; it does not copy a copyrighted recording or imitate an artist exactly. A licensed provider JSON file can supply authorised chord and melody data.</div>
+  </div>
   <div class="audio-grid">
     <div class="control"><label for="audioFile">Load WAV audio</label><input id="audioFile" type="file" accept=".wav,audio/wav,audio/x-wav"></div>
     <div class="control"><label for="audioMode">Extract / analyse</label><select id="audioMode"><option value="melody">Melody</option><option value="chords">Chords</option><option value="drums">Drum groove</option></select></div>
@@ -167,7 +187,7 @@ footer{margin:18px 0 5px;text-align:center;color:#697482;font-size:.74rem}
   </div>
 </section>
 </div>
-<footer>Chord & Melody Composer v1.2 — browser-based theory and audio-analysis engine</footer>
+<footer>Chord & Melody Composer v1.3 — browser-based theory and audio-analysis engine</footer>
 </div>
 
 <script>
@@ -182,7 +202,7 @@ const DIATONIC={
  minor:[["m","min"],["dim","dim"],["","maj"],["m","min"],["m","min"],["","maj"],["","maj"]]
 };
 const el=id=>document.getElementById(id);
-let mode="chords", composition=null, audioCtx=null, activeNodes=[], importedMidi=null, selectedEvent=null, decodedAudio=null;
+let mode="chords", composition=null, audioCtx=null, activeNodes=[], importedMidi=null, selectedEvent=null, decodedAudio=null, selectedSong=null, artistTraits=[];
 
 for(const n of NAMES_SHARP){ const o=document.createElement("option");o.value=n;o.textContent=n;el("keySelect").appendChild(o); }
 el("keySelect").value="C";
@@ -467,7 +487,7 @@ function exportMidi(){
  chordPerformance(composition).forEach(n=>{const t=Math.max(0,Math.round(n.start*ppq)),end=Math.min(endTick,Math.max(t+1,Math.round((n.start+n.duration)*ppq)));ch.push({tick:t,order:1,data:[0x91,n.midi,Math.min(127,n.velocity||62)]},{tick:end,order:0,data:[0x81,n.midi,0]})});
  mel.push({tick:endTick,order:99,data:[0xff,0x01,0]});ch.push({tick:endTick,order:99,data:[0xff,0x01,0]});
  const header=[...strBytes("MThd"),0,0,0,6,0,1,0,3,(ppq>>8)&255,ppq&255],bytes=new Uint8Array([...header,...trackChunk(meta),...trackChunk(ch),...trackChunk(mel)]);
- const blob=new Blob([bytes],{type:"audio/midi"}),a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="chord_melody_composition_v1.2.mid";a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);
+ const blob=new Blob([bytes],{type:"audio/midi"}),a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="chord_melody_composition_v1.3.mid";a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);
  setStatus(`MIDI exported. Chord and melody tracks both end at ${compositionLength()} beats.`,"ok");
 }
 el("midiBtn").onclick=exportMidi;
@@ -496,6 +516,33 @@ function formatMelodyText(){
 el("formatChordBtn").onclick=formatChordText;el("formatMelodyBtn").onclick=formatMelodyText;
 el("chordInput").addEventListener("blur",()=>{if(!el("chordInput").value.includes("|"))formatChordText()});
 el("melodyInput").addEventListener("blur",()=>{if(!el("melodyInput").value.includes("|"))formatMelodyText()});
+
+
+const TAG_PRESET_MAP=[
+ {keys:["hip hop","hip-hop","rap","trap"],preset:"hiphop"},{keys:["r&b","rhythm and blues","soul","neo soul","funk"],preset:"rnb"},
+ {keys:["electronic","electronica","dance","house","techno","edm","synthpop"],preset:"edm"},{keys:["rock","metal","punk","grunge","indie rock"],preset:"rock"},
+ {keys:["jazz","bebop","swing"],preset:"jazz"},{keys:["ambient","drone","new age"],preset:"ambient"},{keys:["classical","baroque","romantic"],preset:"classical"}
+];
+function hashText(t){let h=2166136261;for(const ch of String(t||"")){h^=ch.charCodeAt(0);h=Math.imul(h,16777619)}return h>>>0}
+function presetFromTags(tags){const lower=tags.join(" ").toLowerCase();for(const m of TAG_PRESET_MAP)if(m.keys.some(k=>lower.includes(k)))return m.preset;return "pop"}
+function showTraits(tags){artistTraits=[...new Set(tags.filter(Boolean))].slice(0,8);el("styleTraits").innerHTML=artistTraits.map(t=>`<span class="trait">${escapeHtml(t)}</span>`).join("")}
+async function mbFetch(url){const r=await fetch(url,{headers:{Accept:"application/json"}});if(!r.ok)throw Error(`Song service returned ${r.status}.`);return r.json()}
+async function searchSong(){
+ const title=el("songName").value.trim(),artist=el("songArtist").value.trim();if(!title){setStatus("Enter a song name first.","error");return}
+ setStatus("Searching MusicBrainz…","");el("songResults").innerHTML="";selectedSong=null;
+ try{const q=`recording:${JSON.stringify(title)}${artist?` AND artist:${JSON.stringify(artist)}`:""}`,data=await mbFetch(`https://musicbrainz.org/ws/2/recording/?query=${encodeURIComponent(q)}&fmt=json&limit=8`);
+  const rows=(data.recordings||[]).slice(0,8);if(!rows.length)throw Error("No matching recordings were found.");
+  el("songResults").innerHTML=rows.map((r,i)=>{const a=(r["artist-credit"]||[]).map(x=>x.name).join(", ")||"Unknown artist",release=r.releases?.[0]?.title||"",len=r.length?`${Math.round(r.length/1000)} sec`:"length unknown";return `<div class="song-result" data-song-index="${i}"><div><strong>${escapeHtml(r.title)}</strong><small>${escapeHtml(a)}${release?` • ${escapeHtml(release)}`:""} • ${len}</small></div><button class="secondary choose-song" data-song-index="${i}" type="button">Select</button></div>`}).join("");
+  el("songResults")._rows=rows;setStatus(`Found ${rows.length} possible recordings. Select the correct one.`,"ok");
+ }catch(e){setStatus(`${e.message} Internet search may be blocked when the file is opened locally; serving the HTML from a small web server usually resolves this.`,"error")}
+}
+el("searchSongBtn").onclick=searchSong;
+el("songResults").onclick=async e=>{const b=e.target.closest(".choose-song");if(!b)return;const rows=el("songResults")._rows||[],r=rows[+b.dataset.songIndex];if(!r)return;selectedSong=r;document.querySelectorAll(".song-result").forEach(x=>x.classList.toggle("selected",+x.dataset.songIndex===+b.dataset.songIndex));const artist=(r["artist-credit"]||[]).map(x=>x.name).join(", ");el("styleArtist").value=artist;try{const aid=r["artist-credit"]?.[0]?.artist?.id;if(aid){const d=await mbFetch(`https://musicbrainz.org/ws/2/artist/${aid}?inc=tags&fmt=json`);showTraits((d.tags||[]).sort((a,b)=>(b.count||0)-(a.count||0)).map(x=>x.name))}else showTraits([])}catch{showTraits([])}setStatus(`Selected “${r.title}” by ${artist||"unknown artist"}.`,"ok")};
+function applyPresetObject(name){const p=PRESETS[name]||PRESETS.pop;el("genrePreset").value=name;el("tempo").value=p.tempo;el("meter").value=p.meter;el("scaleSelect").value=p.scale;el("density").value=p.density;el("chordStyle").value=p.chordStyle;el("noteStyle").value=p.noteStyle;el("chordInput").value=p.chords}
+function varyReference(seed,strength){const roots=["C","D","E","F","G","A","B","C#","F#","Bb","Eb"],root=roots[seed%roots.length];el("keySelect").value=FLAT_TO_SHARP[root.toUpperCase()]||root;const shift=strength==="strong"?2:strength==="medium"?1:0;el("tempo").value=Math.max(55,Math.min(180,(+el("tempo").value||110)+(((seed>>4)%9)-4)*(shift+1)));if(selectedSong?.length)el("bars").value=Math.max(4,Math.min(64,Math.round(selectedSong.length/1000/(60/(+el("tempo").value)*4))));}
+function createFromReference(){const artist=el("styleArtist").value.trim(),seed=hashText(`${selectedSong?.title||el("songName").value}|${artist}`),tags=[...artistTraits,artist],preset=presetFromTags(tags);applyPresetObject(preset);varyReference(seed,el("styleStrength").value);setMode("chords");generate();const target=el("referenceTarget").value;if(composition){if(target==="chords")composition.events=[];if(target==="melody")composition.bars=composition.bars.map(()=>[]);composition.reference={title:selectedSong?.title||el("songName").value.trim(),artist,preset,traits:artistTraits};render(composition);setStatus(`Created an original ${target==="both"?"chord and melody arrangement":target+" track"} using broad ${preset} traits${artist?` associated with ${artist}`:""}.`,"ok")}}
+el("applyReferenceBtn").onclick=createFromReference;
+el("licensedJson").onchange=async e=>{const f=e.target.files?.[0];if(!f)return;try{const d=JSON.parse(await f.text()),beats=Math.max(1,+d.beatsPerBar||4),bars=Math.max(1,+d.targetBars||Math.ceil(+d.lengthBeats/beats)||8),root=PC[normRoot(d.key||"C")]??0,scale=d.scale==="minor"?"minor":"major";const chordBars=Array.from({length:bars},()=>[]);(d.chords||[]).forEach(c=>{const p=parseChord(c.symbol);if(!p)return;const start=Math.max(0,+c.start||0),bar=Math.min(bars-1,Math.floor(start/beats));chordBars[bar].push({...p,start:start-bar*beats,duration:Math.max(.125,+c.duration||beats)} )});const events=(d.melody||[]).map(n=>({midi:Number.isFinite(+n.midi)?+n.midi:noteToMidi(n.note),start:+n.start||0,duration:Math.max(.125,+n.duration||1),velocity:Math.max(1,Math.min(127,+n.velocity||90))})).filter(n=>n.midi!==null&&Number.isFinite(n.midi));composition={bars:chordBars,events,root,scale,tempo:Math.max(40,Math.min(240,+d.tempo||110)),targetBars:bars,beatsPerBar:beats,meterValue:beats===3?"3":"4"};normalizeComposition(composition);render(composition);setStatus("Licensed provider chord/melody JSON imported.","ok")}catch(err){setStatus(`Could not import provider JSON: ${err.message}`,"error")}};
 
 function readVLQ(view,pos){let value=0,b;do{b=view.getUint8(pos.i++);value=(value<<7)|(b&127)}while(b&128);return value}
 function parseMidiFile(buf){
