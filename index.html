@@ -663,15 +663,19 @@ function validateCompositionPitch(comp,repair=true){
    }
    pc=((n.midi%12)+12)%12;
    const strong=isStrongBeat(beat,comp.beatsPerBar),sustained=n.duration>=.95;
+   const inScaleChordPcs=chordPcs.filter(x=>scaleAllowed.includes(x));
    if(chordPcs.length&&(strong||sustained)&&!chordPcs.includes(pc)){
      issues.push({index:i,reason:"harmonic-clash"});
-     if(repair)n.midi=nearestAllowedMidi(n.midi,chordPcs,chordPcs,previous?.midi??n.midi);
+     if(repair){
+       const allowed=inScaleChordPcs.length?inScaleChordPcs:scaleAllowed; // never step back outside the scale
+       n.midi=nearestAllowedMidi(n.midi,allowed,inScaleChordPcs,previous?.midi??n.midi);
+     }
    }
    if(previous&&Math.abs(n.midi-previous.midi)>9){
      issues.push({index:i,reason:"large-leap"});
      if(repair){
-       const allowed=chordPcs.length&&(strong||sustained)?chordPcs:scaleAllowed;
-       let candidate=nearestAllowedMidi(n.midi,allowed,chordPcs,previous.midi);
+       const allowed=(strong||sustained)&&inScaleChordPcs.length?inScaleChordPcs:scaleAllowed;
+       let candidate=nearestAllowedMidi(n.midi,allowed,inScaleChordPcs,previous.midi);
        while(candidate-previous.midi>9)candidate-=12;
        while(previous.midi-candidate>9)candidate+=12;
        n.midi=Math.max(36,Math.min(96,candidate));
